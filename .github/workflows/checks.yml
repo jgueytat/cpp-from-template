@@ -1,0 +1,101 @@
+name: Build Mylib
+
+on: [push]
+
+defaults:
+  run:
+    # Use a bash shell so we can use the same syntax for environment variable
+    # access regardless of the host operating system
+    shell: bash
+
+env:
+  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
+  BUILD_TYPE: Debug
+  DOXYGEN_WEBSITES_TARBALL: doxygenWebsites.tar.gz
+  DOXYGEN_WARN_FILE: DoxygenWarnings.log
+  DOXYGEN_WARN_ARTIFACT: DoxygenWarnings
+  DOXYGEN_WARN_TARBALL: DoxygenWarnings.tar
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+
+    steps:
+    - name: Install dependencies
+      run: |
+        sudo apt-get update && sudo apt-get install -yq cppcheck python3-pip doxygen graphviz
+        pip3 install conan
+        echo "${HOME}/.local/bin" >> $GITHUB_PATH
+
+    - name: Checkout Source
+      uses: actions/checkout@v2
+
+    - name: Create CMake build-directory
+      # Some projects don't allow in-source building, so create a separate build directory
+      # We'll use this as our working directory for all subsequent commands
+      run: cmake -E make_directory ${{github.workspace}}/build
+
+    - name: Install conan libraries
+      working-directory: ${{github.workspace}}
+      run: bash .devcontainer/conansetup.sh
+
+    - name: Setup CMake
+      working-directory: ${{github.workspace}}/build
+      run: cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DBUILD_DOC=ON -DRUN_CPPCHECK=ON
+
+    - name: Build
+      working-directory: ${{github.workspace}}/build
+      # Execute the build. You can specify a specific target with "--target <NAME>"
+      run: cmake --build . --config $BUILD_TYPE
+      env:
+        MAKEFLAGS: "-j2"
+
+    - name: Test
+      working-directory: ${{github.workspace}}/build/tests
+      # Execute tests defined by the CMake configuration.
+      # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
+      run: ctest -C $BUILD_TYPE
+
+    - name: Tar files
+      working-directory: ${{github.workspace}}/build/docs/doxydoc
+      # For maintaining file permissions and case sensitive files
+      run: |
+        tar -cf $DOXYGEN_WARN_TARBALL $DOXYGEN_WARN_FILE
+        tar -czf $DOXYGEN_WEBSITES_TARBALL html
+
+    - name: Upload Doxygen websites
+      uses: actions/upload-artifact@v2
+      with:
+        name: DoxygenWebsites
+        path: ${{github.workspace}}/build/docs/doxydoc/${{env.DOXYGEN_WEBSITES_TARBALL}}
+        if-no-files-found: error
+        retention-days: 7
+
+    - name: Upload doxygen warnings
+      uses: actions/upload-artifact@v2
+      with:
+        name: ${{env.DOXYGEN_WARN_ARTIFACT}}
+        path: ${{github.workspace}}/build/docs/doxydoc/${{env.DOXYGEN_WARN_TARBALL}}
+        if-no-files-found: error
+        retention-days: 1
+
+  # documentation:
+  #   runs-on: ubuntu-20.04
+  #   needs: build
+  #   steps:
+  #   - name: Download doxygen warnings
+  #     uses: actions/download-artifact@v2
+  #     with:
+  #       name: ${{env.DOXYGEN_WARN_ARTIFACT}}
+  #       path: ${{github.workspace}}
+
+  #   - name: Extract files
+  #     working-directory: ${{github.workspace}}
+  #     run: tar -xf $DOXYGEN_WARN_TARBALL
+
+  #   - name: Number of warnings
+  #     working-directory: ${{github.workspace}}
+  #     run: |
+  #       echo -n "Number of Warnings: "
+  #       echo "$(grep -v "/test/" $DOXYGEN_WARN_FILE | wc -l)"
+  #       if [[ $(cat $DOXYGEN_WARN_FILE | grep -Ev "is not documented|/test/" | wc -l) -gt 0 ]]; then echo "Warning threshold exceeded!"; exit 1; fi

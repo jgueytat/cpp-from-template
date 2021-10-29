@@ -1,0 +1,12 @@
+# Folders
+.cache
+analysis
+build
+**/bin
+**/obj
+
+# Compiled Object files
+*.o
+*.obj
+
+
